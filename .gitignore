@@ -1,0 +1,45 @@
+# Compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Model weights — large, derived from upstream checkpoints
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Audio outputs (large / generated)
+*.wav
+*.flac
+*.ogg
+# Generated/sample mp3s are ignored, but keep the reference sample
+*.mp3
+!test_001.mp3
+
+# Benchmark / eval artifact dirs
+_bench/
+_eval_*/
+_log/
+_logs/
+logs/
+
+# Local virtualenvs
+.venv/
+venv/
+env/
+
+# Build / dist
+build/
+dist/
+*.egg-info/
