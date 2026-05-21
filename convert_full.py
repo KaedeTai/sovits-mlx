@@ -187,27 +187,55 @@ def convert_d(in_path: str, out_path: str) -> None:
 def export_g_pt(in_st: str, out_pt: str, ref_pth: str | None = None) -> None:
     """Save MLX safetensors back as a PyTorch-loadable .pth.
 
-    Inverts: conv.weight (out,k,in) → (out,in,k)  and  conv_t.weight (out,k,in) → (in,out,k).
-    Re-introduces weight_norm `weight_g`/`weight_v` IF ref_pth is supplied (so the
-    inference pipeline can load with strict=True). Without ref_pth, we save plain
-    `weight` keys and downstream PyTorch code must be patched to load with
-    fuse_pretrained=False (or use the inference convert.py path).
-
-    Note: this is the fallback path. For r6 we'll primarily use MLX checkpoints
-    for resume, and use this only when we want to run inference via the existing
-    PyTorch path.
+    Reverses every transformation `convert_full.py g` applied:
+      - .conv.weight (out,k,in) → .weight (out,in,k)
+      - .conv_t.weight (out,k,in) → .weight (in,out,k)
+      - .conv.bias / .conv_t.bias → .bias
+      - .norm_layers_{1,2}.N.weight → .gamma  and  .bias → .beta
+      - quantizer.vq.layers.0.codebook.embed → ._codebook.embed
+      - **re-introduces weight_norm** on every weight that originally had it
+        (164 modules in G) so PyTorch SynthesizerTrn.load_state_dict(strict=True)
+        succeeds. Strategy: weight_v = fused, weight_g = ||fused||_axis_0.
     """
     from safetensors.numpy import load_file
     import torch
     st = load_file(in_st)
     out: dict = {}
+
+    # Regex that flags keys whose PT counterpart had weight_norm (need split back)
+    WN_PATTERNS = [
+        re.compile(r"^dec\.resblocks\.\d+\.convs[12]\.\d+\.weight$"),
+        re.compile(r"^dec\.ups\.\d+\.weight$"),
+        re.compile(r"^enc_q\.enc\.(in_layers|res_skip_layers)\.\d+\.weight$"),
+        re.compile(r"^enc_q\.enc\.cond_layer\.weight$"),
+        re.compile(r"^flow\.flows\.\d+\.enc\.(in_layers|res_skip_layers)\.\d+\.weight$"),
+        re.compile(r"^flow\.flows\.\d+\.enc\.cond_layer\.weight$"),
+    ]
+
+    def needs_weight_norm(pt_key: str) -> bool:
+        return any(p.match(pt_key) for p in WN_PATTERNS)
+
+    def split_into_weight_norm(w_np):
+        """w (out, in, k) → (weight_g shape (out,1,1), weight_v same shape as w)
+        weight_g_i = ||w_i||_2 over axes 1..N, weight_v = w.
+        Reconstruction in PT: w = g * v / ||v|| = ||v|| * v / ||v|| = v. ✓
+        """
+        axes = tuple(range(1, w_np.ndim))
+        g = np.sqrt((w_np.astype(np.float32) ** 2).sum(axis=axes, keepdims=True)).astype(w_np.dtype)
+        return g, w_np
     for k, v in st.items():
         # Reverse the wrapper renames
         if k.endswith(".conv_t.weight"):
             base = k[: -len(".conv_t.weight")]
             # MLX (out, k, in) → PT (in, out, k)
             arr = np.transpose(v, (2, 0, 1))
-            out[base + ".weight"] = torch.from_numpy(arr)
+            pt_key_weight = base + ".weight"
+            if needs_weight_norm(pt_key_weight):
+                g, vv = split_into_weight_norm(arr)
+                out[base + ".weight_g"] = torch.from_numpy(g)
+                out[base + ".weight_v"] = torch.from_numpy(vv)
+            else:
+                out[pt_key_weight] = torch.from_numpy(arr)
             continue
         if k.endswith(".conv_t.bias"):
             base = k[: -len(".conv_t.bias")]
@@ -216,7 +244,13 @@ def export_g_pt(in_st: str, out_pt: str, ref_pth: str | None = None) -> None:
         if k.endswith(".conv.weight") and v.ndim == 3:
             base = k[: -len(".conv.weight")]
             arr = np.transpose(v, (0, 2, 1))
-            out[base + ".weight"] = torch.from_numpy(arr)
+            pt_key_weight = base + ".weight"
+            if needs_weight_norm(pt_key_weight):
+                g, vv = split_into_weight_norm(arr)
+                out[base + ".weight_g"] = torch.from_numpy(g)
+                out[base + ".weight_v"] = torch.from_numpy(vv)
+            else:
+                out[pt_key_weight] = torch.from_numpy(arr)
             continue
         if k.endswith(".conv.weight") and v.ndim == 4:
             base = k[: -len(".conv.weight")]
@@ -227,15 +261,14 @@ def export_g_pt(in_st: str, out_pt: str, ref_pth: str | None = None) -> None:
             base = k[: -len(".conv.bias")]
             out[base + ".bias"] = torch.from_numpy(v)
             continue
-        # ChannelLayerNorm weight/bias → PT gamma/beta
-        # (the inference convert.py does the opposite; we need to detect by where
-        #  the key lives — modules in PT use gamma/beta only inside encoder norm
-        #  layers, not LayerNorm everywhere)
-        if k.endswith("norm_layers_1.0.weight") or k.endswith("norm_layers_2.0.weight"):
+        # ChannelLayerNorm weight/bias → PT gamma/beta. In upstream, gamma/beta
+        # live inside Encoder.norm_layers_{1,2}.{N} for ALL norm-layer indices.
+        # The earlier version only matched .0.weight which left 36/48 keys mis-named.
+        if re.search(r"\.norm_layers_[12]\.\d+\.weight$", k):
             base = k[: -len(".weight")]
             out[base + ".gamma"] = torch.from_numpy(v)
             continue
-        if k.endswith("norm_layers_1.0.bias") or k.endswith("norm_layers_2.0.bias"):
+        if re.search(r"\.norm_layers_[12]\.\d+\.bias$", k):
             base = k[: -len(".bias")]
             out[base + ".beta"] = torch.from_numpy(v)
             continue
