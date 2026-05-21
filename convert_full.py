@@ -274,7 +274,29 @@ def export_g_pt(in_st: str, out_pt: str, ref_pth: str | None = None) -> None:
             continue
         # quantizer rename back
         if k == "quantizer.vq.layers.0.codebook.embed":
-            out["quantizer.vq.layers.0._codebook.embed"] = torch.from_numpy(v)
+            embed_t = torch.from_numpy(v)
+            out["quantizer.vq.layers.0._codebook.embed"] = embed_t
+            # CRITICAL: re-synthesize the 3 codebook EMA buffers that `fuse_pass`
+            # dropped during PT→MLX import. The upstream model registers them as
+            # buffers (see GPT_SoVITS/module/core_vq.py::EuclideanCodebook). When
+            # the round-tripped ckpt is loaded with strict=False, missing
+            # `inited` falls back to the constructor default (kmeans_init=True
+            # ⇒ inited=False). On the very first quantizer forward,
+            # `init_embed_` then runs kmeans on the input batch and OVERWRITES
+            # the trained codebook embed — destroying inference quality and
+            # producing all-zero-RMS / collapsed audio.  We must persist
+            # `inited=True` so the codebook stays intact.
+            #   inited       : (1,)  float32, value 1.0  (True)
+            #   cluster_size : (codebook_size,) float32 zeros — only consulted
+            #                  during training (expire_codes_, EMA update);
+            #                  default-zeros is fine for inference-only ckpts
+            #   embed_avg    : same shape/dtype as embed; cloned from embed —
+            #                  matches the constructor's `embed_avg = embed.clone()`
+            out["quantizer.vq.layers.0._codebook.inited"] = torch.ones(1, dtype=torch.float32)
+            out["quantizer.vq.layers.0._codebook.cluster_size"] = torch.zeros(
+                embed_t.shape[0], dtype=torch.float32
+            )
+            out["quantizer.vq.layers.0._codebook.embed_avg"] = embed_t.clone()
             continue
         out[k] = torch.from_numpy(v)
     # Wrap as upstream loaders expect: {"model": ..., "epoch": ..., "step": 0}
