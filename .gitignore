@@ -43,3 +43,4 @@ env/
 build/
 dist/
 *.egg-info/
+s1_mlx/bench.log

@@ -1,0 +1,51 @@
+{
+  "data": {
+    "max_eval_sample": 4,
+    "max_sec": 8,
+    "num_workers": 0,
+    "pad_val": 1024
+  },
+  "inference": {
+    "top_k": 5
+  },
+  "model": {
+    "EOS": 1024,
+    "dropout": 0,
+    "embedding_dim": 512,
+    "head": 16,
+    "hidden_dim": 512,
+    "linear_units": 2048,
+    "n_layer": 24,
+    "phoneme_vocab_size": 1033,
+    "random_bert": 0,
+    "vocab_size": 1025
+  },
+  "optimizer": {
+    "schedule": "cosine",
+    "lr_init": 1e-06,
+    "lr": 0.001,
+    "lr_end": 0.0002,
+    "warmup_steps": 200,
+    "decay_steps": 14730
+  },
+  "output_dir": "/Users/kaede/tts/_s1_sandhi_v2/arm_A/logs",
+  "pretrained_s1": "/Users/kaede/tts/tw_finetune_synthetic/s1_ckpt/s1_pathM-e20.ckpt",
+  "train": {
+    "batch_size": 4,
+    "epochs": 15,
+    "exp_name": "s1_pathM_sandhi_v2_A",
+    "freeze_arpa": true,
+    "tw_grad_scale": 2.0,
+    "non_tw_grad_scale": 1.0,
+    "gradient_clip": 1.0,
+    "half_weights_save_dir": "/Users/kaede/tts/_s1_sandhi_v2/arm_A/logs/ckpt_half",
+    "if_save_every_weights": true,
+    "if_save_latest": false,
+    "precision": 32,
+    "pretrained_s1": "/Users/kaede/tts/tw_finetune_synthetic/s1_ckpt/s1_pathM-e20.ckpt",
+    "save_every_n_epoch": 1,
+    "seed": 1234
+  },
+  "train_phoneme_path": "/Users/kaede/tts/_s1_sandhi_v2/2-name2text-s1.txt",
+  "train_semantic_path": "/Users/kaede/tts/_s1_sandhi_v2/6-name2semantic.tsv"
+}

@@ -1,14 +1,18 @@
 # sovits-mlx
 
-An **MLX inference port** of the GPT-SoVITS v2 (v2ProTw) **S2 stage** — the
-spectral decoder/vocoder half of GPT-SoVITS that turns S1 semantic codes +
-reference audio into a waveform. This port runs natively on Apple Silicon via
-[MLX](https://github.com/ml-explore/mlx) and is intended as a drop-in
-replacement for `vq_model.decode(...)` inside the upstream PyTorch pipeline.
+An **MLX inference port** of GPT-SoVITS v2 (v2ProTw). Both stages are now
+implemented in MLX:
 
-> **Scope:** inference only. There is no training code here. S1 (the
-> autoregressive text-to-semantic Transformer) is **not** ported and still runs
-> on PyTorch MPS.
+  * **S2** (spectral decoder/vocoder, top-level dir) — drop-in replacement
+    for `vq_model.decode(...)`.
+  * **S1** (autoregressive text-to-semantic Transformer, `s1_mlx/`) — drop-in
+    replacement for `t2s_model.model.infer_panel(...)`.
+
+Both run natively on Apple Silicon via [MLX](https://github.com/ml-explore/mlx)
+and coexist with the upstream PyTorch pipeline — you can use either backend
+or both, hot-swapped at runtime.
+
+> **Scope:** inference only. No training code here.
 
 Upstream: [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) — all
 credit for the model architecture, training recipe, and original PyTorch
@@ -56,8 +60,10 @@ Taiwanese sentences × 2 runs:
 
 - **S2 decode: ~3.1× faster** (98ms → 32ms median).
 - **Real-time factor** for a 1.58s utterance: 0.062 (PT) → **0.020 (MLX, ~49× real time)**.
-- End-to-end speedup is small (1.05×) because S1 still dominates on PyTorch
-  MPS. Porting S1 to MLX is the next big lever.
+- End-to-end speedup of the S2-only port was small (1.05×) because S1
+  still dominated on PyTorch. With the S1 MLX port now in `s1_mlx/`, the
+  full MLX pipeline is **1.55× faster end-to-end** (~2.2× on S1 alone) — see
+  [`s1_mlx/BENCHMARK.md`](s1_mlx/BENCHMARK.md).
 
 Full numbers in [`BENCHMARK.md`](BENCHMARK.md).
 
@@ -76,6 +82,16 @@ tests/           Per-module numerical-fidelity tests vs PyTorch reference
 MAPPING.md       Architecture mapping doc (PyTorch → MLX, layer by layer)
 BENCHMARK.md     Detailed speed numbers + methodology
 test_001.mp3     Sample MLX-rendered output
+
+s1_mlx/          S1 (text-to-semantic AR transformer) MLX port
+  model.py         T2SModel + transformer blocks + KV-cache decode
+  convert.py       PyTorch .ckpt → MLX safetensors
+  sampling.py      top-k / top-p / temperature / repetition-penalty (MLX)
+  inference.py     Drop-in `infer_panel` + end-to-end CLI (MLX S1 + MLX S2)
+  verify_numerical.py   PT-vs-MLX prefill + greedy-rollout equivalence test
+  bench.py         PT-vs-MLX timing harness
+  MAPPING.md       S1 architecture mapping (PyTorch → MLX)
+  BENCHMARK.md     S1 speed numbers
 ```
 
 ## Dependencies
@@ -151,8 +167,8 @@ python bench.py
 
 ## Status / non-goals
 
-- **Inference only.** Training, gradient flow, and the S1 AR stage are out of
-  scope for this repo.
+- **Inference only.** Training and gradient flow are out of scope (both
+  S1 and S2 are inference ports).
 - **v2ProTw checkpoint format.** This port targets the `version="v2ProTw"`
   variant (1033-row text vocab, `sv_emb` + `ge_to512` + `prelu` heads). Other
   GPT-SoVITS variants (v1, v2, v3) are not supported.
